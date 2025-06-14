@@ -13,15 +13,15 @@ if (!defined('ABSPATH')) {
 }
 
 class FluentSupportEmailParser {
-    
+
     private $option_name = 'fluent_support_email_parser_settings';
     private $cron_hook = 'fluent_support_check_emails';
     private $log_option = 'fluent_support_email_logs';
-    
+
     public function __construct() {
         add_action('init', array($this, 'init'));
     }
-    
+
     public function init() {
         // Hook into WordPress
         add_action('admin_menu', array($this, 'add_admin_menu'));
@@ -30,10 +30,10 @@ class FluentSupportEmailParser {
         add_action('wp_ajax_test_webhook', array($this, 'ajax_test_webhook'));
         add_action('wp_ajax_check_emails_now', array($this, 'ajax_check_emails_now'));
         add_action('wp_ajax_clear_logs', array($this, 'ajax_clear_logs'));
-        
+
         // Schedule cron job if not using direct trigger
         add_action($this->cron_hook, array($this, 'check_emails'));
-        
+
         $options = get_option($this->option_name, array());
         if (!isset($options['use_direct_trigger']) || !$options['use_direct_trigger']) {
             $interval = isset($options['check_interval']) ? $options['check_interval'] : 'fluent_support_15min';
@@ -49,21 +49,21 @@ class FluentSupportEmailParser {
         } else {
             wp_clear_scheduled_hook($this->cron_hook);
         }
-        
+
         // Add custom cron intervals
         add_filter('cron_schedules', array($this, 'add_cron_interval'));
-        
+
         // Enqueue scripts
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
-        
+
         // Register REST API route for direct trigger
         add_action('rest_api_init', array($this, 'register_rest_route'));
-        
+
         // Register activation/deactivation hooks
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
     }
-    
+
     public function register_rest_route() {
         register_rest_route('fluent-support/v1', '/check-emails', array(
             'methods' => 'GET',
@@ -71,24 +71,24 @@ class FluentSupportEmailParser {
             'permission_callback' => '__return_true' // Checked via secret key
         ));
     }
-    
+
     public function handle_direct_trigger($request) {
         $options = get_option($this->option_name);
         $provided_key = $request->get_param('key');
-        
+
         if (empty($options['trigger_key']) || $provided_key !== $options['trigger_key']) {
             return new WP_Error('unauthorized', 'Invalid trigger key', array('status' => 403));
         }
-        
+
         $result = $this->check_emails();
-        
+
         if ($result['success']) {
             return new WP_REST_Response(array('message' => $result['message']), 200);
         } else {
             return new WP_Error('error', $result['message'], array('status' => 500));
         }
     }
-    
+
     public function add_cron_interval($schedules) {
         $schedules['fluent_support_1min'] = array(
             'interval' => 60,
@@ -108,7 +108,7 @@ class FluentSupportEmailParser {
         );
         return $schedules;
     }
-    
+
     public function activate() {
         $default_options = array(
             'email' => '',
@@ -131,20 +131,20 @@ class FluentSupportEmailParser {
                 'last_reset' => time()
             )
         );
-        
+
         if (!get_option($this->option_name)) {
             add_option($this->option_name, $default_options);
         }
-        
+
         if (!get_option($this->log_option)) {
             add_option($this->log_option, array());
         }
     }
-    
+
     public function deactivate() {
         wp_clear_scheduled_hook($this->cron_hook);
     }
-    
+
     public function add_admin_menu() {
         add_options_page(
             'FluentSupport Email Parser',
@@ -154,17 +154,17 @@ class FluentSupportEmailParser {
             array($this, 'admin_page')
         );
     }
-    
+
     public function settings_init() {
         register_setting('fluent_support_email_parser', $this->option_name);
-        
+
         add_settings_section(
             'fluent_support_email_parser_section',
             __('Email Configuration', 'fluent-support-email-parser'),
             array($this, 'settings_section_callback'),
             'fluent_support_email_parser'
         );
-        
+
         $fields = array(
             'email' => 'Email Address',
             'email_password' => 'Email Password',
@@ -178,7 +178,7 @@ class FluentSupportEmailParser {
             'debug_mode' => 'Debug Mode',
             'use_direct_trigger' => 'Use Direct Trigger Endpoint'
         );
-        
+
         foreach ($fields as $field => $label) {
             add_settings_field(
                 $field,
@@ -190,16 +190,16 @@ class FluentSupportEmailParser {
             );
         }
     }
-    
+
     public function settings_section_callback() {
         echo __('Configure your email settings and FluentSupport webhook URL.', 'fluent-support-email-parser');
     }
-    
+
     public function field_callback($args) {
         $options = get_option($this->option_name);
         $field = $args['field'];
         $value = isset($options[$field]) ? $options[$field] : '';
-        
+
         switch ($field) {
             case 'email_password':
                 echo '<input type="password" name="' . $this->option_name . '[' . $field . ']" value="' . esc_attr($value) . '" class="regular-text" />';
@@ -237,42 +237,42 @@ class FluentSupportEmailParser {
                 break;
         }
     }
-    
+
     public function enqueue_admin_scripts($hook) {
         if ($hook !== 'settings_page_fluent-support-email-parser') {
             return;
         }
-        
+
         wp_enqueue_script('jquery');
         wp_localize_script('jquery', 'fluent_support_ajax', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('fluent_support_nonce')
         ));
     }
-    
+
     public function admin_page() {
         $options = get_option($this->option_name);
         $logs = get_option($this->log_option, array());
         $logs = array_slice(array_reverse($logs), 0, 50);
-        
+
         // Generate trigger key if enabled and missing
         if (isset($options['use_direct_trigger']) && $options['use_direct_trigger'] && empty($options['trigger_key'])) {
             $options['trigger_key'] = wp_generate_password(32, false);
             update_option($this->option_name, $options);
         }
-        
+
         ?>
         <div class="wrap">
             <h1>FluentSupport Email Parser</h1>
-            
+
             <?php if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON && (!isset($options['use_direct_trigger']) || !$options['use_direct_trigger'])): ?>
                 <div class="notice notice-warning">
                     <p>WP-Cron is disabled on this site. Automatic email checking requires either enabling the Direct Trigger Endpoint below or setting up a server cron job to run <code>wp-cron.php</code>. Example: <code>*/5 * * * * wget -q -O - <?php echo esc_url(site_url('wp-cron.php?doing_wp_cron')); ?> > /dev/null 2>&1</code></p>
                 </div>
             <?php endif; ?>
-            
+
             <div id="message-container"></div>
-            
+
             <form action="options.php" method="post">
                 <?php
                 settings_fields('fluent_support_email_parser');
@@ -280,7 +280,7 @@ class FluentSupportEmailParser {
                 submit_button();
                 ?>
             </form>
-            
+
             <?php if (isset($options['use_direct_trigger']) && $options['use_direct_trigger']): ?>
                 <div style="margin-top: 20px;">
                     <h3>Direct Trigger Endpoint</h3>
@@ -293,19 +293,19 @@ class FluentSupportEmailParser {
                     <code>*/2 * * * * curl -s <?php echo esc_url($endpoint); ?> > /dev/null 2>&1</code>
                 </div>
             <?php endif; ?>
-            
+
             <div style="margin-top: 30px;">
                 <h2>Testing & Monitoring</h2>
-                
+
                 <div style="margin-bottom: 20px;">
                     <button type="button" id="test-email" class="button">Test Email Connection</button>
                     <button type="button" id="test-webhook" class="button">Test Webhook</button>
                     <button type="button" id="check-emails-now" class="button button-primary">Check Emails Now</button>
                     <button type="button" id="clear-logs" class="button">Clear Logs</button>
                 </div>
-                
+
                 <div id="test-results" style="margin-bottom: 20px;"></div>
-                
+
                 <h3>Recent Activity Logs</h3>
                 <div id="activity-logs" style="max-height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background: #f9f9f9;">
                     <?php if (empty($logs)): ?>
@@ -313,7 +313,7 @@ class FluentSupportEmailParser {
                     <?php else: ?>
                         <?php foreach ($logs as $log): ?>
                             <div style="margin-bottom: 10px; padding: 5px; border-left: 3px solid <?php echo $log['type'] === 'error' ? '#dc3232' : ($log['type'] === 'success' ? '#46b450' : '#0073aa'); ?>;">
-                                <strong><?php echo esc_html($log['timestamp']); ?></strong> - 
+                                <strong><?php echo esc_html($log['timestamp']); ?></strong> -
                                 <span style="color: <?php echo $log['type'] === 'error' ? '#dc3232' : ($log['type'] === 'success' ? '#46b450' : '#0073aa'); ?>;">
                                     <?php echo esc_html(strtoupper($log['type'])); ?>
                                 </span><br>
@@ -322,10 +322,10 @@ class FluentSupportEmailParser {
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
-                
+
                 <div style="margin-top: 20px;">
                     <h3>Connection Statistics</h3>
-                    <?php 
+                    <?php
                     $stats = $options['connection_stats'] ?? array();
                     $total = $stats['total_connections'] ?? 0;
                     $successful = $stats['successful_connections'] ?? 0;
@@ -340,67 +340,67 @@ class FluentSupportEmailParser {
                 </div>
             </div>
         </div>
-        
+
         <script type="text/javascript">
-        jQuery(document).ready(function($) {
-            function showMessage(message, type) {
-                var messageClass = type === 'error' ? 'notice-error' : 'notice-success';
-                $('#message-container').html('<div class="notice ' + messageClass + ' is-dismissible"><p>' + message + '</p></div>');
-                setTimeout(function() { $('#message-container').html(''); }, 5000);
-            }
-            
-            function makeAjaxRequest(action, button, successMessage) {
-                button.prop('disabled', true).text('Testing...');
-                $.ajax({
-                    url: fluent_support_ajax.ajax_url,
-                    type: 'POST',
-                    data: { action: action, nonce: fluent_support_ajax.nonce },
-                    success: function(response) {
-                        if (response.success) {
-                            showMessage(successMessage, 'success');
-                            $('#test-results').html('<div style="color: green;">' + response.data.message + '</div>');
-                        } else {
-                            showMessage('Test failed: ' + response.data.message, 'error');
-                            $('#test-results').html('<div style="color: red;">' + response.data.message + '</div>');
+            jQuery(document).ready(function($) {
+                function showMessage(message, type) {
+                    var messageClass = type === 'error' ? 'notice-error' : 'notice-success';
+                    $('#message-container').html('<div class="notice ' + messageClass + ' is-dismissible"><p>' + message + '</p></div>');
+                    setTimeout(function() { $('#message-container').html(''); }, 5000);
+                }
+
+                function makeAjaxRequest(action, button, successMessage) {
+                    button.prop('disabled', true).text('Testing...');
+                    $.ajax({
+                        url: fluent_support_ajax.ajax_url,
+                        type: 'POST',
+                        data: { action: action, nonce: fluent_support_ajax.nonce },
+                        success: function(response) {
+                            if (response.success) {
+                                showMessage(successMessage, 'success');
+                                $('#test-results').html('<div style="color: green;">' + response.data.message + '</div>');
+                            } else {
+                                showMessage('Test failed: ' + response.data.message, 'error');
+                                $('#test-results').html('<div style="color: red;">' + response.data.message + '</div>');
+                            }
+                        },
+                        error: function() {
+                            showMessage('AJAX request failed', 'error');
+                            $('#test-results').html('<div style="color: red;">AJAX request failed</div>');
+                        },
+                        complete: function() {
+                            button.prop('disabled', false).text(button.data('original-text'));
                         }
-                    },
-                    error: function() {
-                        showMessage('AJAX request failed', 'error');
-                        $('#test-results').html('<div style="color: red;">AJAX request failed</div>');
-                    },
-                    complete: function() {
-                        button.prop('disabled', false).text(button.data('original-text'));
+                    });
+                }
+
+                $('#test-email').click(function() {
+                    $(this).data('original-text', $(this).text());
+                    makeAjaxRequest('test_email_connection', $(this), 'Email connection successful!');
+                });
+
+                $('#test-webhook').click(function() {
+                    $(this).data('original-text', $(this).text());
+                    makeAjaxRequest('test_webhook', $(this), 'Webhook test successful!');
+                });
+
+                $('#check-emails-now').click(function() {
+                    $(this).data('original-text', $(this).text());
+                    makeAjaxRequest('check_emails_now', $(this), 'Email check completed!');
+                });
+
+                $('#clear-logs').click(function() {
+                    if (confirm('Are you sure you want to clear all logs?')) {
+                        $(this).data('original-text', $(this).text());
+                        makeAjaxRequest('clear_logs', $(this), 'Logs cleared!');
+                        setTimeout(function() { location.reload(); }, 1000);
                     }
                 });
-            }
-            
-            $('#test-email').click(function() {
-                $(this).data('original-text', $(this).text());
-                makeAjaxRequest('test_email_connection', $(this), 'Email connection successful!');
             });
-            
-            $('#test-webhook').click(function() {
-                $(this).data('original-text', $(this).text());
-                makeAjaxRequest('test_webhook', $(this), 'Webhook test successful!');
-            });
-            
-            $('#check-emails-now').click(function() {
-                $(this).data('original-text', $(this).text());
-                makeAjaxRequest('check_emails_now', $(this), 'Email check completed!');
-            });
-            
-            $('#clear-logs').click(function() {
-                if (confirm('Are you sure you want to clear all logs?')) {
-                    $(this).data('original-text', $(this).text());
-                    makeAjaxRequest('clear_logs', $(this), 'Logs cleared!');
-                    setTimeout(function() { location.reload(); }, 1000);
-                }
-            });
-        });
         </script>
         <?php
     }
-    
+
     public function ajax_test_email_connection() {
         check_ajax_referer('fluent_support_nonce', 'nonce');
         if (!current_user_can('manage_options')) { wp_die('Unauthorized'); }
@@ -415,7 +415,7 @@ class FluentSupportEmailParser {
             wp_send_json_error(array('message' => $result['message']));
         }
     }
-    
+
     public function ajax_test_webhook() {
         check_ajax_referer('fluent_support_nonce', 'nonce');
         if (!current_user_can('manage_options')) { wp_die('Unauthorized'); }
@@ -430,7 +430,7 @@ class FluentSupportEmailParser {
             wp_send_json_error(array('message' => $result['message']));
         }
     }
-    
+
     public function ajax_check_emails_now() {
         check_ajax_referer('fluent_support_nonce', 'nonce');
         if (!current_user_can('manage_options')) { wp_die('Unauthorized'); }
@@ -441,14 +441,14 @@ class FluentSupportEmailParser {
             wp_send_json_error(array('message' => $result['message']));
         }
     }
-    
+
     public function ajax_clear_logs() {
         check_ajax_referer('fluent_support_nonce', 'nonce');
         if (!current_user_can('manage_options')) { wp_die('Unauthorized'); }
         update_option($this->log_option, array());
         wp_send_json_success(array('message' => 'Logs cleared successfully.'));
     }
-    
+
     private function test_email_connection($options) {
         try {
             $this->update_connection_stats('attempt');
@@ -486,7 +486,7 @@ class FluentSupportEmailParser {
             ini_restore('default_socket_timeout');
         }
     }
-    
+
     private function test_webhook($webhook_url) {
         try {
             $test_data = array(
@@ -524,7 +524,7 @@ class FluentSupportEmailParser {
             return array('success' => false, 'message' => $error);
         }
     }
-    
+
     public function check_emails() {
         $options = get_option($this->option_name);
         if (empty($options['enabled'])) {
@@ -608,7 +608,7 @@ class FluentSupportEmailParser {
             ini_restore('default_socket_timeout');
         }
     }
-    
+
     private function process_email($connection, $email_id, $options) {
         try {
             $headers = imap_headerinfo($connection, $email_id);
@@ -651,7 +651,7 @@ class FluentSupportEmailParser {
             return array('success' => false, 'message' => 'Processing error: ' . $e->getMessage());
         }
     }
-    
+
     private function get_email_body($connection, $email_id, $structure) {
         $body = '';
         if ($structure->type == 0) {
@@ -686,7 +686,7 @@ class FluentSupportEmailParser {
         }
         return $body;
     }
-    
+
     private function decode_header($header) {
         $decoded = imap_mime_header_decode($header);
         $result = '';
@@ -695,14 +695,14 @@ class FluentSupportEmailParser {
         }
         return $result;
     }
-    
+
     private function process_name($full_name) {
         $parts = explode(' ', trim($full_name));
         $first_name = $parts[0] ?? '';
         $last_name = count($parts) > 1 ? implode(' ', array_slice($parts, 1)) : '';
         return array('first_name' => $first_name, 'last_name' => $last_name);
     }
-    
+
     private function log($type, $message) {
         $logs = get_option($this->log_option, array());
         $logs[] = array(
@@ -715,7 +715,7 @@ class FluentSupportEmailParser {
         }
         update_option($this->log_option, $logs);
     }
-    
+
     private function update_connection_stats($type) {
         $options = get_option($this->option_name);
         $stats = $options['connection_stats'] ?? array(
