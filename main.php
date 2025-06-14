@@ -654,36 +654,102 @@ class FluentSupportEmailParser {
 
     private function get_email_body($connection, $email_id, $structure) {
         $body = '';
+        $html_body = '';
+        $text_body = '';
+
         if ($structure->type == 0) {
+            // Single part message
             $body = imap_fetchbody($connection, $email_id, 1);
             if ($structure->encoding == 3) {
                 $body = base64_decode($body);
             } elseif ($structure->encoding == 4) {
                 $body = quoted_printable_decode($body);
             }
+
+            // Check if it's HTML content
+            if (isset($structure->subtype) && strtoupper($structure->subtype) == 'HTML') {
+                $body = $this->html_to_text($body);
+            }
+
         } elseif ($structure->type == 1) {
+            // Multipart message
             $parts = $structure->parts;
+
             for ($i = 0; $i < count($parts); $i++) {
                 $part = $parts[$i];
                 $part_number = $i + 1;
-                if ($part->subtype == 'HTML') {
-                    $body = imap_fetchbody($connection, $email_id, $part_number);
-                    if ($part->encoding == 3) {
-                        $body = base64_decode($body);
-                    } elseif ($part->encoding == 4) {
-                        $body = quoted_printable_decode($body);
-                    }
-                    break;
-                } elseif ($part->subtype == 'PLAIN' && empty($body)) {
-                    $body = imap_fetchbody($connection, $email_id, $part_number);
-                    if ($part->encoding == 3) {
-                        $body = base64_decode($body);
-                    } elseif ($part->encoding == 4) {
-                        $body = quoted_printable_decode($body);
+
+                $part_body = imap_fetchbody($connection, $email_id, $part_number);
+
+                // Decode based on encoding
+                if ($part->encoding == 3) {
+                    $part_body = base64_decode($part_body);
+                } elseif ($part->encoding == 4) {
+                    $part_body = quoted_printable_decode($part_body);
+                }
+
+                // Check content type
+                if (isset($part->subtype)) {
+                    if (strtoupper($part->subtype) == 'HTML') {
+                        $html_body = $part_body;
+                    } elseif (strtoupper($part->subtype) == 'PLAIN') {
+                        $text_body = $part_body;
                     }
                 }
             }
+
+            // Prefer plain text, fall back to converted HTML
+            if (!empty($text_body)) {
+                $body = $text_body;
+            } elseif (!empty($html_body)) {
+                $body = $this->html_to_text($html_body);
+            }
         }
+
+        // Clean up the body text
+        $body = $this->clean_email_body($body);
+
+        return $body;
+    }
+
+    private function html_to_text($html) {
+        // Remove style tags and their content
+        $html = preg_replace('/<style[^>]*>.*?<\/style>/is', '', $html);
+
+        // Remove script tags and their content
+        $html = preg_replace('/<script[^>]*>.*?<\/script>/is', '', $html);
+
+        // Convert common HTML entities
+        $html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // Add line breaks for block elements
+        $html = preg_replace('/<\/(div|p|br|h[1-6]|li)>/i', "$0\n", $html);
+        $html = preg_replace('/<br\s*\/?>/i', "\n", $html);
+
+        // Remove all HTML tags
+        $text = strip_tags($html);
+
+        // Clean up whitespace
+        $text = preg_replace('/\n\s*\n/', "\n\n", $text); // Multiple newlines to double
+        $text = preg_replace('/[ \t]+/', ' ', $text); // Multiple spaces to single
+
+        return trim($text);
+    }
+
+// Add this new function to clean email body:
+    private function clean_email_body($body) {
+        // Remove excessive whitespace
+        $body = preg_replace('/\r\n/', "\n", $body);
+        $body = preg_replace('/\r/', "\n", $body);
+        $body = preg_replace('/\n{3,}/', "\n\n", $body);
+        $body = preg_replace('/[ \t]+/', ' ', $body);
+
+        // Remove common email signature separators
+        $body = preg_replace('/^--\s*$/m', '', $body);
+
+        // Remove leading/trailing whitespace
+        $body = trim($body);
+
         return $body;
     }
 
